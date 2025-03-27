@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from typing import List, Dict, Any
 import json
+import uuid
 from game import TexasHoldEm
 
 app = FastAPI()
@@ -19,6 +20,16 @@ class PokerServer:
         if game_id not in self.connections:
             self.connections[game_id] = []
         self.connections[game_id].append(websocket)
+
+    def get_available_lobby(self) -> str:
+        """
+        Searches for an existing lobby that has at least one waiting player and has not started a game.
+        If no such lobby is found, generates and returns a new game_id.
+        """
+        for lobby_id, players in self.lobbies.items():
+            if lobby_id not in self.active_games and players:
+                return lobby_id
+        return str(uuid.uuid4())
 
     async def join_lobby(self, game_id: str, player_name: str):
         """
@@ -79,10 +90,26 @@ class PokerServer:
 
 server = PokerServer()
 
-@app.websocket("/ws/{game_id}/{player_name}")
-async def websocket_endpoint(websocket: WebSocket, game_id: str, player_name: str):
+@app.websocket("/ws/{player_name}")
+async def websocket_endpoint(websocket: WebSocket, player_name: str):
+    # Try to get the game_id from the query parameters. If not provided, assign one.
+    param_game_id = websocket.query_params.get("game_id")
+    if param_game_id:
+        game_id = param_game_id
+    else:
+        game_id = server.get_available_lobby()
+
+    # Connect and join the lobby for the assigned game_id.
     await server.connect(game_id, websocket)
     await server.join_lobby(game_id, player_name)
+
+    # Optionally let the client know which lobby (game_id) they were assigned to.
+    if not param_game_id:
+        await websocket.send_text(json.dumps({
+            "type": "lobby_assigned",
+            "game_id": game_id
+        }))
+
     try:
         while True:
             data = await websocket.receive_text()
