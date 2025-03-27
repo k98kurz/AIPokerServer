@@ -191,20 +191,32 @@ class TexasHoldEm:
     def determine_winner(self) -> List[Player]:
         """
         Evaluates the active players' hands and returns a list of winner(s).
+        Compares the base hand score (index 0) and then the kicker cards (index 1)
+        element-wise.
         """
         active_players = [p for p in self.players if p.active]
         if not active_players:
             return []
-        best_value = None
+
         winners = []
+        best_score = -1
+        best_kickers = []
+
         for p in active_players:
-            value = self.evaluate_hand(p)
-            if best_value is None or value > best_value:
+            score, kickers = self.evaluate_hand(p)
+            if score > best_score:
+                best_score = score
+                best_kickers = kickers
                 winners = [p]
-                best_value = value
-            elif value == best_value:
-                winners.append(p)
-        print(f"Determined winner(s): {[p.name for p in winners]} with hand value {best_value}")
+            elif score == best_score:
+                # Compare kicker cards (assumes kickers lists are ordered in descending order)
+                if kickers > best_kickers:
+                    best_kickers = kickers
+                    winners = [p]
+                elif kickers == best_kickers:
+                    winners.append(p)
+
+        print(f"Determined winner(s): {[p.name for p in winners]} with hand value ({best_score}, {best_kickers})")
         return winners
 
     def deal_hands(self) -> None:
