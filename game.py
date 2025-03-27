@@ -32,6 +32,7 @@ class Player:
         self.hand: List[Card] = []
         self.active: bool = True
         self.current_bet: int = 0
+        self.total_contribution: int = 0  # Added to track total contribution in the hand
 
     def __repr__(self) -> str:
         # For debugging, __repr__ reveals the hand.
@@ -94,12 +95,14 @@ class TexasHoldEm:
         elif action == "bet":
             # Determine required call amount.
             required_call = self.current_bet - current_player.current_bet
-            if amount < required_call:
-                return (False, f"Minimum required bet is {required_call} chips to call.")
+            # Allow going all-in even if the amount is less than the required call.
+            if amount < required_call and amount != current_player.chips:
+                return (False, f"Minimum required bet is {required_call} chips to call, unless going all-in.")
             if amount > current_player.chips:
                 return (False, "Insufficient chips for that bet.")
             current_player.chips -= amount
             current_player.current_bet += amount
+            current_player.total_contribution += amount
             self.pot += amount
             # If raised above the current bet, update the betting target.
             if current_player.current_bet > self.current_bet:
@@ -113,9 +116,8 @@ class TexasHoldEm:
         active_players = [p for p in self.players if p.active]
         if len(active_players) == 1:
             winner = active_players[0]
-            winner.chips += self.pot
-            msg += f" Only {winner.name} remains. They win the pot of {self.pot} chips."
-            self.pot = 0
+            self.split_pots()  # Split the pots among eligible players.
+            msg += f" Only {winner.name} remains. Remaining pot(s) have been split."
             self.phase = "showdown"
             return (True, msg)
 
@@ -134,13 +136,8 @@ class TexasHoldEm:
                 self.current_bet = 0
                 self.set_next_turn_for_new_betting_round()
             else:
-                # At showdown: determine and award the winner.
-                winners = self.determine_winner()
-                if winners:
-                    winner = winners[0]  # For simplicity, choose the first winner.
-                    winner.chips += self.pot
-                    msg += f" Showdown: Winner is {winner.name}, awarded {self.pot} chips."
-                    self.pot = 0
+                self.split_pots()
+                msg += " Showdown: Pots have been split among winners."
         else:
             msg += f" Next turn: {self.players[self.current_turn_index].name}."
         return (True, msg)
@@ -240,6 +237,9 @@ class TexasHoldEm:
         small_blind_player.current_bet = small_blind
         big_blind_player.current_bet = big_blind
 
+        small_blind_player.total_contribution = small_blind
+        big_blind_player.total_contribution = big_blind
+
         self.pot += small_blind + big_blind
         print(f"{small_blind_player.name} posts small blind ({small_blind} chips).")
         print(f"{big_blind_player.name} posts big blind ({big_blind} chips).")
@@ -254,6 +254,7 @@ class TexasHoldEm:
                 call_amount: int = highest_bet - player.current_bet
                 player.chips -= call_amount
                 player.current_bet += call_amount
+                player.total_contribution += call_amount  # Update total contribution
                 self.pot += call_amount
                 print(f"{player.name} calls with {call_amount} chips.")
 
@@ -283,6 +284,43 @@ class TexasHoldEm:
         if sorted_counts[0][1] == 2:
             return (2, [sorted_counts[0][0]] + ranks[:3])
         return (1, ranks[:5])
+
+    def split_pots(self) -> None:
+        """
+        Splits the pot into main and side pots based on each player's total contributions.
+        Each pot is then awarded to the best hand among eligible (active) players.
+        """
+        # Copy each player's total contribution.
+        contributions = {p: p.total_contribution for p in self.players}
+        pots = []
+
+        # Calculate side pots.
+        while True:
+            active_contribs = [(p, amt) for p, amt in contributions.items() if amt > 0]
+            if not active_contribs:
+                break
+            min_amt = min(amt for _, amt in active_contribs)
+            num_players = len(active_contribs)
+            pot_amount = min_amt * num_players
+            # Only players who have not folded are eligible for winning this pot.
+            eligible_players = [p for p, amt in active_contribs if p.active]
+            pots.append({"amount": pot_amount, "eligible": eligible_players})
+            # Subtract min_amt from each player's contribution.
+            for p, amt in active_contribs:
+                contributions[p] -= min_amt
+
+        # Distribute each pot among its winners.
+        for pot in pots:
+            if pot["eligible"]:
+                winners = self.determine_winner(pot["eligible"])
+                split_amount = pot["amount"] // len(winners)
+                for winner in winners:
+                    winner.chips += split_amount
+                print(f"Pot of {pot['amount']} chips split among {[w.name for w in winners]} (each receives {split_amount}).")
+            else:
+                print(f"Pot of {pot['amount']} chips had no eligible players to win.")
+        # Reset the main pot.
+        self.pot = 0
 
 
 if __name__ == "__main__":
