@@ -11,59 +11,72 @@ MIN_PLAYERS = 2
 
 class PokerServer:
     connections: Dict[str, Dict[str, WebSocket]]
-    lobbies: Dict[str, List[str]]
+    tables: Dict[str, Dict[str, List[str]]]
     active_games: Dict[str, TexasHoldEm]
 
     def __init__(self):
         self.active_games: Dict[str, TexasHoldEm] = {}
-        # Now a dictionary mapping game_id to a dict of {player_name: WebSocket}
+        # Maps table_id to {player_name: WebSocket}
         self.connections: Dict[str, Dict[str, WebSocket]] = {}
-        self.lobbies: Dict[str, List[str]] = {}
+        # Each table has a list of seated players and waiting players.
+        self.tables: Dict[str, Dict[str, List[str]]] = {}
 
-    async def connect(self, game_id: str, player_name: str, websocket: WebSocket):
+    async def connect(self, table_id: str, player_name: str, websocket: WebSocket):
         await websocket.accept()
-        if game_id not in self.connections:
-            self.connections[game_id] = {}
-        self.connections[game_id][player_name] = websocket
+        if table_id not in self.connections:
+            self.connections[table_id] = {}
+        self.connections[table_id][player_name] = websocket
 
-    def get_available_lobby(self) -> str:
+    def get_available_table(self) -> str:
         """
-        Searches for an existing lobby that has at least one waiting player and has not started a game.
-        If no such lobby is found, generates and returns a new game_id.
+        Searches for an existing table that is not currently running a game.
+        If none is found, generates a new table_id and initializes its seating.
         """
-        for lobby_id, players in self.lobbies.items():
-            if lobby_id not in self.active_games and players:
-                return lobby_id
-        return str(uuid.uuid4())
+        for table_id in self.tables:
+            if table_id not in self.active_games:
+                return table_id
+        # No suitable table found; create a new one.
+        new_table_id = str(uuid.uuid4())
+        self.tables[new_table_id] = {"players": [], "waiting": []}
+        return new_table_id
 
-    async def join_lobby(self, game_id: str, player_name: str):
+    async def join_table(self, table_id: str, player_name: str):
         """
-        Adds a player to the lobby. Broadcasts the lobby update to all players in the lobby,
-        and if the number of players in the lobby reaches the minimum needed, starts the game.
+        Adds a player to the specified table. If a game is in progress at the table,
+        the player is added to the waiting list.
+        Otherwise the player is seated immediately. A table update is broadcast,
+        and if there are enough seated players a new game is started.
         """
-        if game_id not in self.lobbies:
-            self.lobbies[game_id] = []
-        if player_name not in self.lobbies[game_id]:
-            self.lobbies[game_id].append(player_name)
+        if table_id not in self.tables:
+            self.tables[table_id] = {"players": [], "waiting": []}
 
-        # Broadcast lobby update so that clients know who is waiting
-        await self.broadcast(game_id, {
-            "type": "lobby_update",
-            "players": self.lobbies[game_id]
+        # If a game is running at this table, new players wait for the next hand.
+        if table_id in self.active_games:
+            if (player_name not in self.tables[table_id]["waiting"] and
+                player_name not in self.tables[table_id]["players"]):
+                self.tables[table_id]["waiting"].append(player_name)
+        else:
+            if player_name not in self.tables[table_id]["players"]:
+                self.tables[table_id]["players"].append(player_name)
+
+        # Broadcast table seating state.
+        await self.broadcast(table_id, {
+            "type": "table_update",
+            "players": self.tables[table_id]["players"],
+            "waiting": self.tables[table_id]["waiting"]
         })
 
-        # If enough players are in the lobby and the game isn't already started, create and start the game.
-        if len(self.lobbies[game_id]) >= MIN_PLAYERS and game_id not in self.active_games:
-            self.create_game(game_id, self.lobbies[game_id])
-            await self.broadcast(game_id, {
+        # If there are enough seated players and no game is running, start the game.
+        if len(self.tables[table_id]["players"]) >= MIN_PLAYERS and table_id not in self.active_games:
+            self.create_game(table_id, self.tables[table_id]["players"])
+            await self.broadcast(table_id, {
                 "type": "start",
                 "message": "Game is starting!"
             })
-            # Start the game with proper enforcement of game rules.
-            game = self.active_games[game_id]
+            game = self.active_games[table_id]
             game.start_game()
-            # Broadcast initial game state.
-            await self.broadcast(game_id, {
+            # Broadcast the initial game state.
+            await self.broadcast(table_id, {
                 "type": "update",
                 "players": [p.public_view() for p in game.players],
                 "pot": game.pot,
@@ -71,26 +84,26 @@ class PokerServer:
                 "current_turn": game.players[game.current_turn_index].name,
                 "community_cards": [str(card) for card in game.community_cards]
             })
-            # Deal hands privately.
+            # Deal each player his private hand.
             for player in game.players:
-                if player.name in self.connections[game_id]:
-                    await self.connections[game_id][player.name].send_text(json.dumps({
+                if player.name in self.connections[table_id]:
+                    await self.connections[table_id][player.name].send_text(json.dumps({
                         "type": "hand",
                         "hand": [str(card) for card in player.hand]
                     }))
 
-    def create_game(self, game_id: str, players: List[str]):
-        """Creates a new game with the list of players from the lobby."""
-        self.active_games[game_id] = TexasHoldEm(players)
+    def create_game(self, table_id: str, players: List[str]):
+        """Creates a new game at a table with the list of players seated."""
+        self.active_games[table_id] = TexasHoldEm(players)
 
-    async def broadcast(self, game_id: str, message: Any):
-        """Sends a message to all websocket connections for the given game_id."""
-        if game_id in self.connections:
-            for connection in self.connections[game_id].values():
+    async def broadcast(self, table_id: str, message: Any):
+        """Sends a message to all websocket connections for the given table_id."""
+        if table_id in self.connections:
+            for connection in self.connections[table_id].values():
                 await connection.send_text(json.dumps(message))
 
-    async def handle_action(self, game_id: str, player_name: str, action: str, amount: int = 0):
-        game = self.active_games.get(game_id)
+    async def handle_action(self, table_id: str, player_name: str, action: str, amount: int = 0):
+        game = self.active_games.get(table_id)
         if not game:
             return
 
@@ -102,15 +115,14 @@ class PokerServer:
 
         if not success:
             # Send an error message to the player who attempted the invalid action.
-            if player_name in self.connections.get(game_id, {}):
-                await self.connections[game_id][player_name].send_text(json.dumps({
+            if player_name in self.connections.get(table_id, {}):
+                await self.connections[table_id][player_name].send_text(json.dumps({
                     "type": "error",
                     "message": message
                 }))
             return
 
-        # Broadcast the updated game state if the action succeeds.
-        await self.broadcast(game_id, {
+        await self.broadcast(table_id, {
             "type": "update",
             "message": message,
             "players": [p.public_view() for p in game.players],
@@ -120,6 +132,72 @@ class PokerServer:
             "community_cards": [str(card) for card in game.community_cards]
         })
 
+        # When the game reaches showdown, end the current game and, if there are waiting players,
+        # start the next one.
+        if game.phase == "showdown":
+            await self.end_game_and_start_new_one(table_id)
+
+    async def end_game_and_start_new_one(self, table_id: str):
+        """
+        Ends the active game on the table, merges any waiting players with the current seated players,
+        and starts a new game if there are enough players.
+        """
+        game = self.active_games.get(table_id)
+        if not game:
+            return
+
+        # End the current game.
+        del self.active_games[table_id]
+
+        # Merge waiting players into the next round.
+        table = self.tables.get(table_id)
+        if table:
+            # Combine current seated players with waiting players (avoiding duplicates).
+            new_players = table["players"] + table["waiting"]
+            new_players = list(dict.fromkeys(new_players))
+            self.tables[table_id]["players"] = new_players
+            self.tables[table_id]["waiting"] = []
+
+        if table and len(self.tables[table_id]["players"]) >= MIN_PLAYERS:
+            self.create_game(table_id, self.tables[table_id]["players"])
+            game = self.active_games[table_id]
+            game.start_game()
+            await self.broadcast(table_id, {
+                "type": "start",
+                "message": "New game is starting!"
+            })
+            await self.broadcast(table_id, {
+                "type": "update",
+                "players": [p.public_view() for p in game.players],
+                "pot": game.pot,
+                "phase": game.phase,
+                "current_turn": game.players[game.current_turn_index].name,
+                "community_cards": [str(card) for card in game.community_cards]
+            })
+            for player in game.players:
+                if player.name in self.connections[table_id]:
+                    await self.connections[table_id][player.name].send_text(json.dumps({
+                        "type": "hand",
+                        "hand": [str(card) for card in player.hand]
+                    }))
+
+    async def disconnect(self, table_id: str, player_name: str):
+        # Remove the websocket connection.
+        if table_id in self.connections:
+            self.connections[table_id].pop(player_name, None)
+
+        # Remove the player from the table—checking both to see if they are seated or waiting.
+        if table_id in self.tables:
+            if player_name in self.tables[table_id]["players"]:
+                self.tables[table_id]["players"].remove(player_name)
+            if player_name in self.tables[table_id]["waiting"]:
+                self.tables[table_id]["waiting"].remove(player_name)
+            await self.broadcast(table_id, {
+                "type": "table_update",
+                "players": self.tables[table_id]["players"],
+                "waiting": self.tables[table_id]["waiting"]
+            })
+
 
 server = PokerServer()
 
@@ -127,22 +205,22 @@ app = FastAPI()
 
 @app.websocket("/ws/{player_name}")
 async def websocket_endpoint(websocket: WebSocket, player_name: str):
-    # Try to get the game_id from the query parameters. If not provided, assign one.
-    param_game_id = websocket.query_params.get("game_id")
-    if param_game_id:
-        game_id = param_game_id
+    # Use the "table_id" query parameter instead of "game_id."
+    param_table_id = websocket.query_params.get("table_id")
+    if param_table_id:
+        table_id = param_table_id
     else:
-        game_id = server.get_available_lobby()
+        table_id = server.get_available_table()
 
-    # Connect and join the lobby for the assigned game_id.
-    await server.connect(game_id, player_name, websocket)
-    await server.join_lobby(game_id, player_name)
+    # Connect and join the table.
+    await server.connect(table_id, player_name, websocket)
+    await server.join_table(table_id, player_name)
 
-    # Optionally let the client know which lobby (game_id) they were assigned to.
-    if not param_game_id:
+    # Optionally let the client know which table (table_id) they were assigned to.
+    if not param_table_id:
         await websocket.send_text(json.dumps({
-            "type": "lobby_assigned",
-            "game_id": game_id
+            "type": "table_assigned",
+            "table_id": table_id
         }))
 
     try:
@@ -150,19 +228,7 @@ async def websocket_endpoint(websocket: WebSocket, player_name: str):
             data = await websocket.receive_text()
             message = json.loads(data)
             await server.handle_action(
-                game_id, player_name, message["action"], message.get("amount", 0)
+                table_id, player_name, message["action"], message.get("amount", 0)
             )
     except WebSocketDisconnect:
-        # Remove the websocket connection
-        if game_id in server.connections:
-            server.connections[game_id].pop(player_name, None)
-
-        # Also remove the player from the lobby (if the game hasn't started yet)
-        if game_id in server.lobbies and player_name in server.lobbies[game_id]:
-            server.lobbies[game_id].remove(player_name)
-
-        # Broadcast the updated lobby list to the remaining connections
-        await server.broadcast(game_id, {
-            "type": "lobby_update",
-            "players": server.lobbies.get(game_id, [])
-        })
+        await server.disconnect(table_id, player_name)
