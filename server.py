@@ -4,10 +4,10 @@ import json
 import uuid
 from game import TexasHoldEm
 
-app = FastAPI()
 
 # This constant defines how many players are required to start a game.
 MIN_PLAYERS = 2
+
 
 class PokerServer:
     connections: Dict[str, Dict[str, WebSocket]]
@@ -110,7 +110,10 @@ class PokerServer:
             "pot": game.pot
         })
 
+
 server = PokerServer()
+
+app = FastAPI()
 
 @app.websocket("/ws/{player_name}")
 async def websocket_endpoint(websocket: WebSocket, player_name: str):
