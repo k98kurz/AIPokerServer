@@ -56,6 +56,156 @@ class TexasHoldEm:
         self.community_cards: List[Card] = []
         self.pot: int = 0
         self.dealer_index: int = 0
+        # New attributes for game state management:
+        self.phase: str = "pre-flop"  # phases: pre-flop, flop, turn, river, showdown
+        self.current_turn_index: int = 0
+        self.current_bet: int = 0  # highest bet in current betting round
+
+    def start_game(self) -> None:
+        # Deal private hands to each player and post blinds.
+        print("Starting game: Dealing hands and posting blinds.")
+        for player in self.players:
+            player.hand = self.deck.draw(2)  # Deal two cards to each player.
+            print(f"{player.name} receives: {player.hand}")
+        self.post_blinds()
+        # Initialize the current bet from the big blind.
+        big_blind_player = self.players[(self.dealer_index + 2) % len(self.players)]
+        self.current_bet = big_blind_player.current_bet
+        # Set turn order: typically the player left of the big blind.
+        if len(self.players) == 2:
+            self.current_turn_index = self.dealer_index
+        else:
+            self.current_turn_index = (self.dealer_index + 3) % len(self.players)
+        print(f"Betting phase: {self.phase}, starting turn: {self.players[self.current_turn_index].name}")
+
+    def take_action(self, player_name: str, action: str, amount: int = 0) -> Tuple[bool, str]:
+        """
+        Processes an action (e.g., bet or fold) from the given player if it is their turn.
+        Returns a tuple (success, message).
+        """
+        current_player = self.players[self.current_turn_index]
+        if current_player.name != player_name:
+            return (False, "It's not your turn.")
+
+        msg = ""
+        if action == "fold":
+            current_player.active = False
+            msg = f"{player_name} folds."
+        elif action == "bet":
+            # Determine required call amount.
+            required_call = self.current_bet - current_player.current_bet
+            if amount < required_call:
+                return (False, f"Minimum required bet is {required_call} chips to call.")
+            if amount > current_player.chips:
+                return (False, "Insufficient chips for that bet.")
+            current_player.chips -= amount
+            current_player.current_bet += amount
+            self.pot += amount
+            # If raised above the current bet, update the betting target.
+            if current_player.current_bet > self.current_bet:
+                self.current_bet = current_player.current_bet
+            msg = f"{player_name} bets {amount} chips."
+        else:
+            return (False, "Invalid action.")
+
+        print(msg)
+        # If only one player remains active, end immediately.
+        active_players = [p for p in self.players if p.active]
+        if len(active_players) == 1:
+            winner = active_players[0]
+            winner.chips += self.pot
+            msg += f" Only {winner.name} remains. They win the pot of {self.pot} chips."
+            self.pot = 0
+            self.phase = "showdown"
+            return (True, msg)
+
+        # Advance to the next active player.
+        self.next_turn()
+
+        # If all remaining players have matched bets, end the betting round.
+        if self.is_betting_round_complete():
+            msg += " Betting round complete."
+            self.advance_phase()
+            msg += f" Advancing phase to {self.phase}."
+            # Reset bets for next round (except at showdown).
+            if self.phase != "showdown":
+                for p in self.players:
+                    p.current_bet = 0
+                self.current_bet = 0
+                self.set_next_turn_for_new_betting_round()
+            else:
+                # At showdown: determine and award the winner.
+                winners = self.determine_winner()
+                if winners:
+                    winner = winners[0]  # For simplicity, choose the first winner.
+                    winner.chips += self.pot
+                    msg += f" Showdown: Winner is {winner.name}, awarded {self.pot} chips."
+                    self.pot = 0
+        else:
+            msg += f" Next turn: {self.players[self.current_turn_index].name}."
+        return (True, msg)
+
+    def next_turn(self) -> None:
+        """Advance current_turn_index to the next active player."""
+        num_players = len(self.players)
+        for i in range(1, num_players+1):
+            next_index = (self.current_turn_index + i) % num_players
+            if self.players[next_index].active:
+                self.current_turn_index = next_index
+                return
+
+    def is_betting_round_complete(self) -> bool:
+        """Returns True if all active players have put in the same bet this round."""
+        active_players = [p for p in self.players if p.active]
+        if not active_players:
+            return True
+        bets = {p.current_bet for p in active_players}
+        return len(bets) == 1
+
+    def advance_phase(self) -> None:
+        """Moves the game to the next phase and deals community cards as needed."""
+        phases = ["pre-flop", "flop", "turn", "river", "showdown"]
+        current_index = phases.index(self.phase)
+        if current_index < len(phases) - 1:
+            self.phase = phases[current_index + 1]
+            if self.phase == "flop":
+                self.deal_community_cards(3)
+            elif self.phase in ["turn", "river"]:
+                self.deal_community_cards(1)
+            # No dealing for showdown.
+        print(f"Advanced to phase: {self.phase}")
+
+    def set_next_turn_for_new_betting_round(self) -> None:
+        """
+        After a betting round, resets the turn order.
+        For example, the player immediately to the left of the dealer starts.
+        """
+        num_players = len(self.players)
+        for i in range(num_players):
+            candidate_index = (self.dealer_index + 1 + i) % num_players
+            if self.players[candidate_index].active:
+                self.current_turn_index = candidate_index
+                print(f"New betting round starting with {self.players[candidate_index].name}")
+                return
+
+    def determine_winner(self) -> List[Player]:
+        """
+        Evaluates the active players' hands and returns a list of winner(s).
+        """
+        active_players = [p for p in self.players if p.active]
+        if not active_players:
+            return []
+        best_value = None
+        winners = []
+        for p in active_players:
+            value = self.evaluate_hand(p)
+            if best_value is None or value > best_value:
+                winners = [p]
+                best_value = value
+            elif value == best_value:
+                winners.append(p)
+        print(f"Determined winner(s): {[p.name for p in winners]} with hand value {best_value}")
+        return winners
 
     def deal_hands(self) -> None:
         print("Dealing hands...")
@@ -126,4 +276,4 @@ class TexasHoldEm:
 if __name__ == "__main__":
     players: List[str] = ["Alice", "Bob", "Charlie", "Dana"]
     game: TexasHoldEm = TexasHoldEm(players)
-    game.play_tournament()
+    game.start_game()

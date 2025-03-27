@@ -59,9 +59,19 @@ class PokerServer:
                 "type": "start",
                 "message": "Game is starting!"
             })
-            # Deal hands privately.
+            # Start the game with proper enforcement of game rules.
             game = self.active_games[game_id]
-            game.deal_hands()
+            game.start_game()
+            # Broadcast initial game state.
+            await self.broadcast(game_id, {
+                "type": "update",
+                "players": [p.public_view() for p in game.players],
+                "pot": game.pot,
+                "phase": game.phase,
+                "current_turn": game.players[game.current_turn_index].name,
+                "community_cards": [str(card) for card in game.community_cards]
+            })
+            # Deal hands privately.
             for player in game.players:
                 if player.name in self.connections[game_id]:
                     await self.connections[game_id][player.name].send_text(json.dumps({
@@ -84,30 +94,20 @@ class PokerServer:
         if not game:
             return
 
-        player = next((p for p in game.players if p.name == player_name), None)
-        if not player:
+        # Only process bet and fold actions via the game logic.
+        if action not in ["bet", "fold"]:
             return
 
-        if action == "bet":
-            player.chips -= amount
-            player.current_bet += amount
-            game.pot += amount
-        elif action == "fold":
-            player.active = False
-        elif action == "deal_community":
-            # Use "amount" as the number of community cards to deal; default to 1 if not provided.
-            num = amount if amount > 0 else 1
-            game.deal_community_cards(num)
-            await self.broadcast(game_id, {
-                "type": "community_cards",
-                "cards": [str(card) for card in game.community_cards]
-            })
-
-        # Broadcast the updated game state (using public view for each player so that hands remain secret)
+        success, message = game.take_action(player_name, action, amount)
+        # Broadcast the updated game state
         await self.broadcast(game_id, {
             "type": "update",
+            "message": message,
             "players": [p.public_view() for p in game.players],
-            "pot": game.pot
+            "pot": game.pot,
+            "phase": game.phase,
+            "current_turn": game.players[game.current_turn_index].name if game.players else None,
+            "community_cards": [str(card) for card in game.community_cards]
         })
 
 
