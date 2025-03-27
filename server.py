@@ -99,7 +99,17 @@ class PokerServer:
             return
 
         success, message = game.take_action(player_name, action, amount)
-        # Broadcast the updated game state
+
+        if not success:
+            # Send an error message to the player who attempted the invalid action.
+            if player_name in self.connections.get(game_id, {}):
+                await self.connections[game_id][player_name].send_text(json.dumps({
+                    "type": "error",
+                    "message": message
+                }))
+            return
+
+        # Broadcast the updated game state if the action succeeds.
         await self.broadcast(game_id, {
             "type": "update",
             "message": message,
