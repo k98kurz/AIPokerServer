@@ -7,6 +7,7 @@ from game import TexasHoldEm
 
 # This constant defines how many players are required to start a game.
 MIN_PLAYERS = 2
+MAX_PLAYERS = 6
 
 
 class PokerServer:
@@ -29,11 +30,14 @@ class PokerServer:
 
     def get_available_table(self) -> str:
         """
-        Searches for an existing table that is not currently running a game.
-        If none is found, generates a new table_id and initializes its seating.
+        Searches for an existing table that is not full.
+        A table is considered full if the total number of players
+        (seated + waiting) reaches MAX_PLAYERS.
+        If no such table is found, generates a new table_id and initializes its seating.
         """
-        for table_id in self.tables:
-            if table_id not in self.active_games:
+        for table_id, table_info in self.tables.items():
+            total_players = len(table_info["players"]) + len(table_info["waiting"])
+            if total_players < MAX_PLAYERS:
                 return table_id
         # No suitable table found; create a new one.
         new_table_id = str(uuid.uuid4())
@@ -44,13 +48,14 @@ class PokerServer:
         """
         Adds a player to the specified table. If a game is in progress at the table,
         the player is added to the waiting list.
-        Otherwise the player is seated immediately. A table update is broadcast,
-        and if there are enough seated players a new game is started.
+        Otherwise the player is seated immediately.
+        Sends a table_assigned message to the player,
+        broadcasts a table_update and if there are enough seated players, starts a game.
         """
         if table_id not in self.tables:
             self.tables[table_id] = {"players": [], "waiting": []}
 
-        # If a game is running at this table, new players wait for the next hand.
+        # Process seating based on whether a game is in progress.
         if table_id in self.active_games:
             if (player_name not in self.tables[table_id]["waiting"] and
                 player_name not in self.tables[table_id]["players"]):
@@ -58,6 +63,13 @@ class PokerServer:
         else:
             if player_name not in self.tables[table_id]["players"]:
                 self.tables[table_id]["players"].append(player_name)
+
+        # Always send the table_assigned message to the player.
+        if player_name in self.connections.get(table_id, {}):
+            await self.connections[table_id][player_name].send_text(json.dumps({
+                "type": "table_assigned",
+                "table_id": table_id
+            }))
 
         # Broadcast table seating state.
         await self.broadcast(table_id, {
@@ -212,16 +224,11 @@ async def websocket_endpoint(websocket: WebSocket, player_name: str):
     else:
         table_id = server.get_available_table()
 
-    # Connect and join the table.
+    # Connect the websocket.
     await server.connect(table_id, player_name, websocket)
-    await server.join_table(table_id, player_name)
 
-    # Optionally let the client know which table (table_id) they were assigned to.
-    if not param_table_id:
-        await websocket.send_text(json.dumps({
-            "type": "table_assigned",
-            "table_id": table_id
-        }))
+    # Always delegate the table_assigned message sending to join_table.
+    await server.join_table(table_id, player_name)
 
     try:
         while True:
