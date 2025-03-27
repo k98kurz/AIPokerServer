@@ -321,9 +321,3 @@ class TexasHoldEm:
                 print(f"Pot of {pot['amount']} chips had no eligible players to win.")
         # Reset the main pot.
         self.pot = 0
-
-
-if __name__ == "__main__":
-    players: List[str] = ["Alice", "Bob", "Charlie", "Dana"]
-    game: TexasHoldEm = TexasHoldEm(players)
-    game.start_game()
