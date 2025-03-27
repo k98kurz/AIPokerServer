@@ -1,59 +1,60 @@
 import random
 from collections import Counter
+from typing import List, Optional, Tuple
 
 class Card:
-    SUITS = ['Hearts', 'Diamonds', 'Clubs', 'Spades']
-    RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
-    RANK_VALUES = {rank: i for i, rank in enumerate(RANKS, start=2)}
+    SUITS: List[str] = ['Hearts', 'Diamonds', 'Clubs', 'Spades']
+    RANKS: List[str] = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+    RANK_VALUES: dict[str, int] = {rank: i for i, rank in enumerate(RANKS, start=2)}
     
-    def __init__(self, rank, suit):
-        self.rank = rank
-        self.suit = suit
+    def __init__(self, rank: str, suit: str) -> None:
+        self.rank: str = rank
+        self.suit: str = suit
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.rank} of {self.suit}"
 
 class Deck:
-    def __init__(self):
-        self.cards = [Card(rank, suit) for suit in Card.SUITS for rank in Card.RANKS]
+    def __init__(self) -> None:
+        self.cards: List[Card] = [Card(rank, suit) for suit in Card.SUITS for rank in Card.RANKS]
         random.shuffle(self.cards)
     
-    def draw(self, num=1):
+    def draw(self, num: int = 1) -> Optional[List[Card]]:
         return [self.cards.pop() for _ in range(num)] if len(self.cards) >= num else None
 
 class Player:
-    def __init__(self, name, chips=1000):
-        self.name = name
-        self.chips = chips
-        self.hand = []
-        self.active = True
-        self.current_bet = 0
+    def __init__(self, name: str, chips: int = 1000) -> None:
+        self.name: str = name
+        self.chips: int = chips
+        self.hand: List[Card] = []
+        self.active: bool = True
+        self.current_bet: int = 0
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.name} ({self.chips} chips) - Hand: {self.hand}"
 
 class TexasHoldEm:
-    def __init__(self, players):
-        self.deck = Deck()
-        self.players = [Player(name) for name in players]
-        self.community_cards = []
-        self.pot = 0
-        self.dealer_index = 0
+    def __init__(self, players: List[str]) -> None:
+        self.deck: Deck = Deck()
+        self.players: List[Player] = [Player(name) for name in players]
+        self.community_cards: List[Card] = []
+        self.pot: int = 0
+        self.dealer_index: int = 0
     
-    def deal_hands(self):
+    def deal_hands(self) -> None:
         print("Dealing hands...")
         for player in self.players:
-            player.hand = self.deck.draw(2)
+            player.hand = self.deck.draw(2)  # type: ignore
             print(f"{player.name} receives: {player.hand}")
     
-    def deal_community_cards(self, num):
-        cards = self.deck.draw(num)
+    def deal_community_cards(self, num: int) -> None:
+        cards = self.deck.draw(num)  # type: ignore
         self.community_cards.extend(cards)
         print(f"Dealing {num} community card(s): {cards}")
     
-    def post_blinds(self, small_blind=10, big_blind=20):
-        small_blind_player = self.players[(self.dealer_index + 1) % len(self.players)]
-        big_blind_player = self.players[(self.dealer_index + 2) % len(self.players)]
+    def post_blinds(self, small_blind: int = 10, big_blind: int = 20) -> None:
+        small_blind_player: Player = self.players[(self.dealer_index + 1) % len(self.players)]
+        big_blind_player: Player = self.players[(self.dealer_index + 2) % len(self.players)]
         
         small_blind_player.chips -= small_blind
         big_blind_player.chips -= big_blind
@@ -65,28 +66,27 @@ class TexasHoldEm:
         print(f"{small_blind_player.name} posts small blind ({small_blind} chips).")
         print(f"{big_blind_player.name} posts big blind ({big_blind} chips).")
     
-    def betting_round(self):
+    def betting_round(self) -> None:
         print("Starting betting round...")
-        highest_bet = max(player.current_bet for player in self.players)
-        active_players = [p for p in self.players if p.chips > 0]
+        highest_bet: int = max(player.current_bet for player in self.players)
+        active_players: List[Player] = [p for p in self.players if p.chips > 0]
         
         for player in active_players:
             if player.current_bet < highest_bet:
-                call_amount = highest_bet - player.current_bet
+                call_amount: int = highest_bet - player.current_bet
                 player.chips -= call_amount
                 player.current_bet += call_amount
                 self.pot += call_amount
                 print(f"{player.name} calls with {call_amount} chips.")
     
-
-    def evaluate_hand(self, player):
-        all_cards = sorted(player.hand + self.community_cards, key=lambda card: Card.RANK_VALUES[card.rank], reverse=True)
+    def evaluate_hand(self, player: Player) -> Tuple[int, List[int]]:
+        all_cards: List[Card] = sorted(player.hand + self.community_cards, key=lambda card: Card.RANK_VALUES[card.rank], reverse=True)
         rank_counts = Counter(Card.RANK_VALUES[card.rank] for card in all_cards)
         sorted_counts = sorted(rank_counts.items(), key=lambda x: (-x[1], -x[0]))
         suits = Counter(card.suit for card in all_cards)
-        flush = max(suits.values()) >= 5
-        ranks = sorted(set(rank_counts.keys()), reverse=True)
-        straight = any(ranks[i] - ranks[i+4] == 4 for i in range(len(ranks) - 4)) or ranks[:5] == [14, 5, 4, 3, 2]
+        flush: bool = max(suits.values()) >= 5
+        ranks: List[int] = sorted(set(rank_counts.keys()), reverse=True)
+        straight: bool = any(ranks[i] - ranks[i+4] == 4 for i in range(len(ranks) - 4)) or ranks[:5] == [14, 5, 4, 3, 2]
         
         if flush and straight:
             return (9, ranks[:5])
@@ -106,38 +106,7 @@ class TexasHoldEm:
             return (2, [sorted_counts[0][0]] + ranks[:3])
         return (1, ranks[:5])
     
-    def determine_winners(self):
-        best_hand = max(self.players, key=self.evaluate_hand)
-        best_score = self.evaluate_hand(best_hand)
-        winners = [p for p in self.players if self.evaluate_hand(p) == best_score]
-        split_pot = self.pot // len(winners)
-        for winner in winners:
-            winner.chips += split_pot
-        if len(winners) == 1:
-            print(winners[0].name, "won the pot of", self.pot, "chips.")
-        else:
-            print(f"Winners: {', '.join(p.name for p in winners)} split the pot of {self.pot} chips.")
-    
-    def play_hand(self):
-        print("\nStarting a new hand...")
-        self.deck = Deck()
-        self.community_cards = []
-        self.pot = 0
-        for player in self.players:
-            player.current_bet = 0
-        
-        self.deal_hands()
-        self.post_blinds()
-        self.betting_round()
-        
-        for num in [3, 1, 1]:
-            self.deal_community_cards(num)
-            self.betting_round()
-        
-        self.determine_winners()
-        self.dealer_index = (self.dealer_index + 1) % len(self.players)
-    
-    def play_tournament(self, starting_chips=1000):
+    def play_tournament(self, starting_chips: int = 1000) -> None:
         print("Starting tournament...")
         for player in self.players:
             player.chips = starting_chips
@@ -145,10 +114,10 @@ class TexasHoldEm:
         while len([p for p in self.players if p.chips > 0]) > 1:
             self.play_hand()
         
-        winner = next(p for p in self.players if p.chips > 0)
+        winner: Player = next(p for p in self.players if p.chips > 0)
         print(f"{winner.name} wins the tournament!")
 
 if __name__ == "__main__":
-    players = ["Alice", "Bob", "Charlie", "Dana"]
-    game = TexasHoldEm(players)
+    players: List[str] = ["Alice", "Bob", "Charlie", "Dana"]
+    game: TexasHoldEm = TexasHoldEm(players)
     game.play_tournament()
