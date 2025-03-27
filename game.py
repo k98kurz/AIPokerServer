@@ -31,7 +31,19 @@ class Player:
         self.current_bet: int = 0
 
     def __repr__(self) -> str:
+        # For debugging, __repr__ reveals the hand.
         return f"{self.name} ({self.chips} chips) - Hand: {self.hand}"
+
+    def public_view(self) -> dict:
+        """
+        Returns a public view of the player that does not include the private hand.
+        """
+        return {
+            "name": self.name,
+            "chips": self.chips,
+            "current_bet": self.current_bet,
+            "active": self.active
+        }
 
 class TexasHoldEm:
     def __init__(self, players: List[str]) -> None:

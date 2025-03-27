@@ -10,16 +10,21 @@ app = FastAPI()
 MIN_PLAYERS = 2
 
 class PokerServer:
+    connections: Dict[str, Dict[str, WebSocket]]
+    lobbies: Dict[str, List[str]]
+    active_games: Dict[str, TexasHoldEm]
+
     def __init__(self):
         self.active_games: Dict[str, TexasHoldEm] = {}
-        self.connections: Dict[str, List[WebSocket]] = {}
+        # Now a dictionary mapping game_id to a dict of {player_name: WebSocket}
+        self.connections: Dict[str, Dict[str, WebSocket]] = {}
         self.lobbies: Dict[str, List[str]] = {}
 
-    async def connect(self, game_id: str, websocket: WebSocket):
+    async def connect(self, game_id: str, player_name: str, websocket: WebSocket):
         await websocket.accept()
         if game_id not in self.connections:
-            self.connections[game_id] = []
-        self.connections[game_id].append(websocket)
+            self.connections[game_id] = {}
+        self.connections[game_id][player_name] = websocket
 
     def get_available_lobby(self) -> str:
         """
@@ -54,6 +59,15 @@ class PokerServer:
                 "type": "start",
                 "message": "Game is starting!"
             })
+            # Deal hands privately.
+            game = self.active_games[game_id]
+            game.deal_hands()
+            for player in game.players:
+                if player.name in self.connections[game_id]:
+                    await self.connections[game_id][player.name].send_text(json.dumps({
+                        "type": "hand",
+                        "hand": [str(card) for card in player.hand]
+                    }))
 
     def create_game(self, game_id: str, players: List[str]):
         """Creates a new game with the list of players from the lobby."""
@@ -62,7 +76,7 @@ class PokerServer:
     async def broadcast(self, game_id: str, message: Any):
         """Sends a message to all websocket connections for the given game_id."""
         if game_id in self.connections:
-            for connection in self.connections[game_id]:
+            for connection in self.connections[game_id].values():
                 await connection.send_text(json.dumps(message))
 
     async def handle_action(self, game_id: str, player_name: str, action: str, amount: int = 0):
@@ -80,13 +94,21 @@ class PokerServer:
             game.pot += amount
         elif action == "fold":
             player.active = False
+        elif action == "deal_community":
+            # Use "amount" as the number of community cards to deal; default to 1 if not provided.
+            num = amount if amount > 0 else 1
+            game.deal_community_cards(num)
+            await self.broadcast(game_id, {
+                "type": "community_cards",
+                "cards": [str(card) for card in game.community_cards]
+            })
 
+        # Broadcast the updated game state (using public view for each player so that hands remain secret)
         await self.broadcast(game_id, {
             "type": "update",
-            "players": [str(p) for p in game.players],
+            "players": [p.public_view() for p in game.players],
             "pot": game.pot
         })
-
 
 server = PokerServer()
 
@@ -100,7 +122,7 @@ async def websocket_endpoint(websocket: WebSocket, player_name: str):
         game_id = server.get_available_lobby()
 
     # Connect and join the lobby for the assigned game_id.
-    await server.connect(game_id, websocket)
+    await server.connect(game_id, player_name, websocket)
     await server.join_lobby(game_id, player_name)
 
     # Optionally let the client know which lobby (game_id) they were assigned to.
@@ -119,7 +141,8 @@ async def websocket_endpoint(websocket: WebSocket, player_name: str):
             )
     except WebSocketDisconnect:
         # Remove the websocket connection
-        server.connections[game_id].remove(websocket)
+        if game_id in server.connections:
+            server.connections[game_id].pop(player_name, None)
 
         # Also remove the player from the lobby (if the game hasn't started yet)
         if game_id in server.lobbies and player_name in server.lobbies[game_id]:
