@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from typing import List, Dict, Any
 import json
+from game import TexasHoldem
 
 app = FastAPI()
 
