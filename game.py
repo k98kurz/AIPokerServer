@@ -2,6 +2,7 @@ import random
 from collections import Counter
 from typing import List, Optional, Tuple
 
+
 class Card:
     SUITS: List[str] = ['Hearts', 'Diamonds', 'Clubs', 'Spades']
     RANKS: List[str] = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
@@ -14,6 +15,7 @@ class Card:
     def __repr__(self) -> str:
         return f"{self.rank} of {self.suit}"
 
+
 class Deck:
     def __init__(self) -> None:
         self.cards: List[Card] = [Card(rank, suit) for suit in Card.SUITS for rank in Card.RANKS]
@@ -21,6 +23,7 @@ class Deck:
 
     def draw(self, num: int = 1) -> Optional[List[Card]]:
         return [self.cards.pop() for _ in range(num)] if len(self.cards) >= num else None
+
 
 class Player:
     def __init__(self, name: str, chips: int = 1000) -> None:
@@ -44,6 +47,7 @@ class Player:
             "current_bet": self.current_bet,
             "active": self.active
         }
+
 
 class TexasHoldEm:
     def __init__(self, players: List[str]) -> None:
@@ -118,16 +122,6 @@ class TexasHoldEm:
             return (2, [sorted_counts[0][0]] + ranks[:3])
         return (1, ranks[:5])
 
-    def play_tournament(self, starting_chips: int = 1000) -> None:
-        print("Starting tournament...")
-        for player in self.players:
-            player.chips = starting_chips
-
-        while len([p for p in self.players if p.chips > 0]) > 1:
-            self.play_hand()
-
-        winner: Player = next(p for p in self.players if p.chips > 0)
-        print(f"{winner.name} wins the tournament!")
 
 if __name__ == "__main__":
     players: List[str] = ["Alice", "Bob", "Charlie", "Dana"]
