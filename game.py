@@ -185,21 +185,22 @@ class TexasHoldEm:
                 print(f"New betting round starting with {self.players[candidate_index].name}")
                 return
 
-    def determine_winner(self) -> List[Player]:
+    def determine_winner(self, players: Optional[List[Player]] = None) -> List[Player]:
         """
-        Evaluates the active players' hands and returns a list of winner(s).
-        Compares the base hand score (index 0) and then the kicker cards (index 1)
-        element-wise.
+        Evaluates the given players' hands (or all active players if none provided)
+        and returns a list of winner(s). Comparisons are made based on a base hand score
+        and then the kicker cards.
         """
-        active_players = [p for p in self.players if p.active]
-        if not active_players:
+        if players is None:
+            players = [p for p in self.players if p.active]
+        if not players:
             return []
 
         winners = []
         best_score = -1
         best_kickers = []
 
-        for p in active_players:
+        for p in players:
             score, kickers = self.evaluate_hand(p)
             if score > best_score:
                 best_score = score
