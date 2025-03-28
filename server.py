@@ -144,15 +144,21 @@ class PokerServer:
         if table_id in self.start_tasks:
             del self.start_tasks[table_id]
 
-    async def broadcast(self, table_id: str, message: Any):
-        """Sends a message to all websocket connections for the given table_id."""
-        if table_id in self.connections:
-            for connection in self.connections[table_id].values():
-                try:
-                    await connection.send_text(json.dumps(message))
-                except Exception:
-                    # If one connection is unresponsive (or closed), ignore it.
-                    pass
+    async def broadcast(self, table_id: str, message: dict) -> None:
+        """Broadcasts a message to all connected clients on a table.
+        Clients whose send fails are removed from the connection list."""
+        if table_id not in self.connections:
+            return
+        message_text = json.dumps(message)
+        closed_players = []
+        for player, ws in list(self.connections[table_id].items()):
+            try:
+                await ws.send_text(message_text)
+            except Exception:
+                # If sending fails, mark this client to remove.
+                closed_players.append(player)
+        for player in closed_players:
+            self.connections[table_id].pop(player, None)
 
     async def handle_action(self, table_id: str, player_name: str, action: str, amount: int = 0):
         game = self.active_games.get(table_id)
@@ -277,17 +283,10 @@ app = FastAPI()
 
 @app.websocket("/ws/{player_name}")
 async def websocket_endpoint(websocket: WebSocket, player_name: str):
-    # Use the "table_id" query parameter instead of "game_id."
     param_table_id = websocket.query_params.get("table_id")
-    if param_table_id:
-        table_id = param_table_id
-    else:
-        table_id = server.get_available_table()
+    table_id = param_table_id if param_table_id else server.get_available_table()
 
-    # Connect the websocket.
     await server.connect(table_id, player_name, websocket)
-
-    # Always delegate the table_assigned message sending to join_table.
     await server.join_table(table_id, player_name)
 
     try:
@@ -297,5 +296,6 @@ async def websocket_endpoint(websocket: WebSocket, player_name: str):
             await server.handle_action(
                 table_id, player_name, message["action"], message.get("amount", 0)
             )
-    except WebSocketDisconnect:
+    except Exception:
+        # This includes WebSocketDisconnect and any other exception.
         await server.disconnect(table_id, player_name)
