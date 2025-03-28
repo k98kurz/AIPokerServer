@@ -11,7 +11,7 @@ MIN_PLAYERS = 2
 MAX_PLAYERS = 6
 
 # Configurable delay (in seconds) before the first game starts after reaching the minimum number of players.
-GAME_START_DELAY = 10
+GAME_START_DELAY = 5
 
 
 class PokerServer:
