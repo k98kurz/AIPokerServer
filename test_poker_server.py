@@ -18,28 +18,25 @@ from websockets import connect
 from server import PokerServer, app, GAME_START_DELAY, server  # Imported global "server"
 
 
-async def expect_message(ws: WebSocketTestSession, expected_type: str, timeout: float = 1.0):
+async def read_message(ws, timeout: float = 1.0) -> tuple[dict | None, Exception | None]:
     """
-    Helper function to receive a message from the websocket within `timeout` seconds,
-    parse it as JSON, assert its "type" matches expected_type, and return the parsed message.
-
-    This helper supports both asynchronous websocket connections (e.g. from websockets.connect)
-    as well as synchronous TestClient websockets (wrapped via asyncio.to_thread).
+    Reads a message from the websocket and returns a tuple (message, error).
+    - If the message is successfully received and parsed, returns (message, None).
+    - If a TimeoutError occurs or JSON parsing fails, returns (None, error).
     """
     try:
-        # If ws.receive_text is a coroutine function, call it directly.
         if asyncio.iscoroutinefunction(ws.receive_text):
             text = await asyncio.wait_for(ws.receive_text(), timeout)
         else:
-            # Otherwise, run the synchronous receive_text in a thread.
             text = await asyncio.wait_for(asyncio.to_thread(ws.receive_text), timeout)
-    except asyncio.TimeoutError:
-        raise TimeoutError(
-            f"Timed out waiting for message of type '{expected_type}' after {timeout} seconds"
-        )
-    msg = json.loads(text)
-    assert msg["type"] == expected_type, f"Expected message type '{expected_type}', got '{msg['type']}' ({msg})"
-    return msg
+    except TimeoutError as e:
+        return None, e
+
+    try:
+        msg = json.loads(text)
+        return msg, None
+    except Exception as e:
+        return None, e
 
 
 class TestPokerServer(unittest.IsolatedAsyncioTestCase):
@@ -94,37 +91,77 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
              client.websocket_connect("/ws/TestBob") as ws_bob, \
              client.websocket_connect("/ws/TestCharlie") as ws_charlie:
 
-            msg_alice = await expect_message(ws_alice, "table_assigned")
-            msg_bob   = await expect_message(ws_bob, "table_assigned")
-            msg_charlie = await expect_message(ws_charlie, "table_assigned")
+            # table_assigned messages
+            msg_alice, err = await read_message(ws_alice)
+            assert err is None, f"Error receiving message for Alice: {err}"
+            assert msg_alice.get("type") == "table_assigned", f"Expected 'table_assigned', got {msg_alice}"
+
+            msg_bob, err = await read_message(ws_bob)
+            assert err is None, f"Error receiving message for Bob: {err}"
+            assert msg_bob.get("type") == "table_assigned", f"Expected 'table_assigned', got {msg_bob}"
+
+            msg_charlie, err = await read_message(ws_charlie)
+            assert err is None, f"Error receiving message for Charlie: {err}"
+            assert msg_charlie.get("type") == "table_assigned", f"Expected 'table_assigned', got {msg_charlie}"
+
             table_id = msg_alice["table_id"]
             assert msg_bob["table_id"] == table_id
-            assert msg_charlie["table_id"] == table_id, (table_id, msg_charlie)
+            assert msg_charlie["table_id"] == table_id, f"Expected table id {table_id}, got {msg_charlie}"
 
-            # Then, after joining, a "table_update" broadcast is sent.
-            _ = await expect_message(ws_alice, "table_update")
-            _ = await expect_message(ws_bob, "table_update")
-            _ = await expect_message(ws_alice, "table_update")
-            _ = await expect_message(ws_charlie, "table_update")
-            _ = await expect_message(ws_alice, "table_update")
+            # table_update broadcasts after join.
+            msg, err = await read_message(ws_alice)
+            assert err is None, f"Error receiving table_update for Alice: {err}"
+            assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
-            # --- Game start broadcast -----------
-            # Use the GAME_START_DELAY from configuration plus a 1-second overhead.
+            msg, err = await read_message(ws_bob)
+            assert err is None, f"Error receiving table_update for Bob: {err}"
+            assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
+
+            msg, err = await read_message(ws_alice)
+            assert err is None, f"Error receiving second table_update for Alice: {err}"
+            assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
+
+            msg, err = await read_message(ws_charlie)
+            assert err is None, f"Error receiving table_update for Charlie: {err}"
+            assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
+
+            msg, err = await read_message(ws_alice)
+            assert err is None, f"Error receiving third table_update for Alice: {err}"
+            assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
+
+            # --- Wait for Game Start Broadcast -----------
             start_timeout = GAME_START_DELAY + 1
-            start_msg_alice = await expect_message(ws_alice, "start", timeout=start_timeout)
-            start_msg_bob   = await expect_message(ws_bob, "start")
-            _ = await expect_message(ws_charlie, "start")
-            assert start_msg_alice["message"] == "Game is starting!", f"Expected 'Game is starting!', got {start_msg_alice['message']}"
-            assert start_msg_bob["message"] == "Game is starting!", f"Expected 'Game is starting!', got {start_msg_bob['message']}"
+            print("[DEBUG] Waiting for 'start' message...")
+            start_msg_alice, err = await read_message(ws_alice, timeout=start_timeout)
+            assert err is None, f"Error receiving start message for Alice: {err}"
+            assert start_msg_alice.get("type") == "start", f"Expected 'start', got {start_msg_alice}"
+            assert start_msg_alice.get("message") == "Game is starting!", f"Unexpected start message: {start_msg_alice}"
 
-            # Depending on timing, Charlie might receive either a "start" or "table_update" message.
-            charlie_next = json.loads(await asyncio.to_thread(ws_charlie.receive_text))
-            if charlie_next["type"] not in ["start", "table_update"]:
-                raise AssertionError("Expected 'start' or 'table_update' for Charlie, got " + charlie_next["type"])
+            start_msg_bob, err = await read_message(ws_bob, timeout=start_timeout)
+            assert err is None, f"Error receiving start message for Bob: {err}"
+            assert start_msg_bob.get("type") == "start", f"Expected 'start', got {start_msg_bob}"
+            assert start_msg_bob.get("message") == "Game is starting!", f"Unexpected start message: {start_msg_bob}"
 
-            # Retrieve the update broadcast to determine the current turn.
-            update_msg_alice = await expect_message(ws_alice, "update")
-            update_msg_bob   = await expect_message(ws_bob, "update")
+            start_msg_charlie, err = await read_message(ws_charlie, timeout=start_timeout)
+            assert err is None, f"Error receiving start message for Charlie: {err}"
+            assert start_msg_charlie.get("type") == "start", f"Expected 'start', got {start_msg_charlie}"
+            assert start_msg_charlie.get("message") == "Game is starting!", f"Unexpected start message: {start_msg_charlie}"
+
+            # Retrieve the next message from Charlie which should be either a start or table_update.
+            charlie_next, err = await read_message(ws_charlie)
+            assert err is None, f"Error receiving follow-up message for Charlie: {err}"
+            if charlie_next.get("type") not in ["start", "table_update"]:
+                raise AssertionError("Expected 'start' or 'table_update' for Charlie, got " + str(charlie_next.get("type")))
+
+            # Update broadcast to determine current turn.
+            update_msg_alice, err = await read_message(ws_alice)
+            assert err is None, f"Error receiving update for Alice: {err}"
+            assert update_msg_alice.get("type") == "update", f"Expected 'update', got {update_msg_alice}"
+
+            update_msg_bob, err = await read_message(ws_bob)
+            assert err is None, f"Error receiving update for Bob: {err}"
+            assert update_msg_bob.get("type") == "update", f"Expected 'update', got {update_msg_bob}"
+
             current_turn = update_msg_alice.get("current_turn")
             assert current_turn is not None, "Game state did not indicate a current turn."
 
@@ -138,8 +175,10 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
                 "action": "bet",
                 "amount": 50
             }))
-            error_msg = await expect_message(out_of_turn_ws, "error")
-            assert "not your turn" in error_msg["message"].lower(), f"Error did not indicate out-of-turn: {error_msg['message']}"
+            error_msg, err = await read_message(out_of_turn_ws)
+            assert err is None, f"Error receiving error for out-of-turn bet: {err}"
+            assert error_msg.get("type") == "error", f"Expected error type, got {error_msg}"
+            assert "not your turn" in error_msg.get("message", "").lower(), f"Error did not indicate out-of-turn: {error_msg.get('message')}"
 
             # --- Test invalid action: bet exceeding chips -----------
             if current_turn == "TestAlice":
@@ -155,8 +194,10 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
                 "action": "bet",
                 "amount": 10000  # An amount far beyond the available chips.
             }))
-            error_msg = await expect_message(current_turn_ws, "error")
-            assert "insufficient" in error_msg["message"].lower(), f"Expected insufficient chips error, got: {error_msg['message']}"
+            error_msg, err = await read_message(current_turn_ws)
+            assert err is None, f"Error receiving error for excessive bet: {err}"
+            assert error_msg.get("type") == "error", f"Expected error type, got {error_msg}"
+            assert "insufficient" in error_msg.get("message", "").lower(), f"Expected insufficient chips error, got: {error_msg.get('message')}"
 
             # --- Test valid action: correct bet -----------
             current_turn_ws.send_text(json.dumps({
@@ -164,13 +205,16 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
                 "amount": 100
             }))
 
-            update_alice = json.loads(await asyncio.to_thread(ws_alice.receive_text))
-            update_bob   = json.loads(await asyncio.to_thread(ws_bob.receive_text))
-            update_charlie = json.loads(await asyncio.to_thread(ws_charlie.receive_text))
+            update_alice_raw, err = await read_message(ws_alice)
+            assert err is None, f"Error receiving update for Alice after bet: {err}"
+            update_bob_raw, err = await read_message(ws_bob)
+            assert err is None, f"Error receiving update for Bob after bet: {err}"
+            update_charlie_raw, err = await read_message(ws_charlie)
+            assert err is None, f"Error receiving update for Charlie after bet: {err}"
 
-            for upd_msg in [update_alice, update_bob, update_charlie]:
-                assert upd_msg["type"] == "update", f"Expected 'update' message; got {upd_msg['type']}"
-                assert f"bets 100 chips" in upd_msg["message"].lower(), f"Update message did not confirm the bet: {upd_msg['message']}"
+            for upd_msg in [update_alice_raw, update_bob_raw, update_charlie_raw]:
+                assert upd_msg.get("type") == "update", f"Expected 'update' message; got {upd_msg.get('type')}"
+                assert "bets 100 chips" in upd_msg.get("message", "").lower(), f"Update message did not confirm the bet: {upd_msg.get('message')}"
 
 
 if __name__ == "__main__":
