@@ -89,12 +89,11 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
 
     async def test_valid_and_invalid_actions(self):
         client = TestClient(app)
+        # Use distinct player names to help with debugging.
+        with client.websocket_connect("/ws/TestAlice") as ws_alice, \
+             client.websocket_connect("/ws/TestBob") as ws_bob, \
+             client.websocket_connect("/ws/TestCharlie") as ws_charlie:
 
-        with client.websocket_connect("/ws/Alice") as ws_alice, \
-             client.websocket_connect("/ws/Bob") as ws_bob, \
-             client.websocket_connect("/ws/Charlie") as ws_charlie:
-
-            # --- Initial connection messages -----------
             msg_alice = await expect_message(ws_alice, "table_assigned")
             msg_bob   = await expect_message(ws_bob, "table_assigned")
             msg_charlie = await expect_message(ws_charlie, "table_assigned")
@@ -130,7 +129,7 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
             assert current_turn is not None, "Game state did not indicate a current turn."
 
             # --- Test invalid action: out-of-turn bet -----------
-            if current_turn != "Alice":
+            if current_turn != "TestAlice":
                 out_of_turn_ws = ws_alice
             else:
                 out_of_turn_ws = ws_bob
@@ -143,11 +142,11 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
             assert "not your turn" in error_msg["message"].lower(), f"Error did not indicate out-of-turn: {error_msg['message']}"
 
             # --- Test invalid action: bet exceeding chips -----------
-            if current_turn == "Alice":
+            if current_turn == "TestAlice":
                 current_turn_ws = ws_alice
-            elif current_turn == "Bob":
+            elif current_turn == "TestBob":
                 current_turn_ws = ws_bob
-            elif current_turn == "Charlie":
+            elif current_turn == "TestCharlie":
                 current_turn_ws = ws_charlie
             else:
                 raise AssertionError("Unexpected current turn value.")

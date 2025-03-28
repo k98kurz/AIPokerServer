@@ -89,6 +89,7 @@ class PokerServer:
                 "table_id": table_id
             }))
 
+        print(f"[DEBUG] Player '{player_name}' joined table {table_id}. Current seated players: {self.tables[table_id]['players']}")
         # Broadcast table seating state.
         await self.broadcast(table_id, {
             "type": "table_update",
@@ -100,6 +101,7 @@ class PokerServer:
         if (len(self.tables[table_id]["players"]) >= MIN_PLAYERS and
             table_id not in self.active_games):
             if table_id not in self.start_tasks:
+                print(f"[DEBUG] Scheduling game start for table {table_id}")
                 self.start_tasks[table_id] = asyncio.create_task(self.delayed_game_start(table_id))
 
     def create_game(self, table_id: str, players: List[str]):
@@ -112,34 +114,32 @@ class PokerServer:
         If after waiting the table still has enough players and no game has started,
         the game is created and started.
         """
+        print(f"[DEBUG] Delayed game start called for table {table_id}. Waiting for {self.game_start_delay} seconds. Current players: {self.tables.get(table_id, {}).get('players', [])}")
         await asyncio.sleep(self.game_start_delay)
-        # Double-check conditions before starting the game.
-        if (table_id in self.tables and
-            len(self.tables[table_id]["players"]) >= MIN_PLAYERS and
-            table_id not in self.active_games):
-            self.create_game(table_id, self.tables[table_id]["players"])
+        if table_id not in self.tables:
+            print(f"[DEBUG] Table {table_id} not found after sleep.")
+            return
+        players = self.tables[table_id]["players"]
+        print(f"[DEBUG] After waiting, table {table_id} players: {players}")
+        if len(players) >= MIN_PLAYERS and table_id not in self.active_games:
+            print(f"[DEBUG] Starting game for table {table_id} with players: {players}")
+            self.create_game(table_id, players)
+            game = self.active_games[table_id]
+            game.start_game()
             await self.broadcast(table_id, {
                 "type": "start",
                 "message": "Game is starting!"
             })
-            game = self.active_games[table_id]
-            game.start_game()
-            # Broadcast the initial game state.
             await self.broadcast(table_id, {
                 "type": "update",
                 "players": [p.public_view() for p in game.players],
                 "pot": game.pot,
                 "phase": game.phase,
-                "current_turn": game.players[game.current_turn_index].name,
+                "current_turn": game.players[game.current_turn_index].name if game.players else None,
                 "community_cards": [str(card) for card in game.community_cards]
             })
-            # Deal each player his private hand.
-            for player in game.players:
-                if player.name in self.connections.get(table_id, {}):
-                    await self.connections[table_id][player.name].send_text(json.dumps({
-                        "type": "hand",
-                        "hand": [str(card) for card in player.hand]
-                    }))
+        else:
+            print(f"[DEBUG] Not starting game for table {table_id}. Insufficient players or game already active. Current players: {players}")
         # Remove the scheduled start task since it has finished.
         if table_id in self.start_tasks:
             del self.start_tasks[table_id]
@@ -240,6 +240,7 @@ class PokerServer:
                     }))
 
     async def disconnect(self, table_id: str, player_name: str):
+        print(f"[DEBUG] Disconnect called for player '{player_name}' on table {table_id}")
         # Remove the websocket connection.
         if table_id in self.connections:
             self.connections[table_id].pop(player_name, None)
@@ -250,8 +251,7 @@ class PokerServer:
                 self.tables[table_id]["players"].remove(player_name)
             if player_name in self.tables[table_id]["waiting"]:
                 self.tables[table_id]["waiting"].remove(player_name)
-
-            # Broadcast the updated table state to the remaining players.
+            print(f"[DEBUG] After disconnect, table {table_id} players: {self.tables[table_id]['players']}")
             await self.broadcast(table_id, {
                 "type": "table_update",
                 "players": self.tables[table_id]["players"],
@@ -262,6 +262,7 @@ class PokerServer:
             if table_id in self.start_tasks and len(self.tables[table_id]["players"]) < MIN_PLAYERS:
                 task = self.start_tasks.pop(table_id)
                 task.cancel()
+                print(f"[DEBUG] Cancelled scheduled game start for table {table_id} due to insufficient players.")
                 await self.broadcast(table_id, {
                     "type": "game_cancelled",
                     "message": "Game cancelled due to insufficient players."
@@ -271,6 +272,7 @@ class PokerServer:
             # terminate the game and inform the remaining players.
             if table_id in self.active_games and len(self.tables[table_id]["players"]) < MIN_PLAYERS:
                 del self.active_games[table_id]
+                print(f"[DEBUG] Active game on table {table_id} cancelled due to insufficient players.")
                 await self.broadcast(table_id, {
                     "type": "game_cancelled",
                     "message": "Game cancelled due to insufficient players."
