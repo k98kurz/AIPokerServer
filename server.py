@@ -3,11 +3,15 @@ from typing import List, Dict, Any
 import json
 import uuid
 from game import TexasHoldEm
+import asyncio  # <-- add asyncio import if not already present
 
 
 # This constant defines how many players are required to start a game.
 MIN_PLAYERS = 2
 MAX_PLAYERS = 6
+
+# Configurable delay (in seconds) before the first game starts after reaching the minimum number of players.
+GAME_START_DELAY = 10
 
 
 class PokerServer:
@@ -21,6 +25,20 @@ class PokerServer:
         self.connections: Dict[str, Dict[str, WebSocket]] = {}
         # Each table has a list of seated players and waiting players.
         self.tables: Dict[str, Dict[str, List[str]]] = {}
+        # Configurable delay before starting the game.
+        self.game_start_delay = GAME_START_DELAY
+        # Dictionary mapping table_id to scheduled delayed start tasks.
+        self.start_tasks: Dict[str, asyncio.Task] = {}
+
+    def reset_state(self):
+        """Reset the internal state (useful for tests)."""
+        self.active_games.clear()
+        self.connections.clear()
+        self.tables.clear()
+        # Cancel any scheduled start tasks.
+        for task in self.start_tasks.values():
+            task.cancel()
+        self.start_tasks.clear()
 
     async def connect(self, table_id: str, player_name: str, websocket: WebSocket):
         await websocket.accept()
@@ -50,7 +68,7 @@ class PokerServer:
         the player is added to the waiting list.
         Otherwise the player is seated immediately.
         Sends a table_assigned message to the player,
-        broadcasts a table_update and if there are enough seated players, starts a game.
+        broadcasts a table_update and if there are enough seated players, schedules a delayed game start.
         """
         if table_id not in self.tables:
             self.tables[table_id] = {"players": [], "waiting": []}
@@ -78,8 +96,27 @@ class PokerServer:
             "waiting": self.tables[table_id]["waiting"]
         })
 
-        # If there are enough seated players and no game is running, start the game.
-        if len(self.tables[table_id]["players"]) >= MIN_PLAYERS and table_id not in self.active_games:
+        # Instead of immediately starting the game, schedule a delayed start.
+        if (len(self.tables[table_id]["players"]) >= MIN_PLAYERS and
+            table_id not in self.active_games):
+            if table_id not in self.start_tasks:
+                self.start_tasks[table_id] = asyncio.create_task(self.delayed_game_start(table_id))
+
+    def create_game(self, table_id: str, players: List[str]):
+        """Creates a new game at a table with the list of players seated."""
+        self.active_games[table_id] = TexasHoldEm(players)
+
+    async def delayed_game_start(self, table_id: str):
+        """
+        Waits for a configurable amount of time before starting the game.
+        If after waiting the table still has enough players and no game has started,
+        the game is created and started.
+        """
+        await asyncio.sleep(self.game_start_delay)
+        # Double-check conditions before starting the game.
+        if (table_id in self.tables and
+            len(self.tables[table_id]["players"]) >= MIN_PLAYERS and
+            table_id not in self.active_games):
             self.create_game(table_id, self.tables[table_id]["players"])
             await self.broadcast(table_id, {
                 "type": "start",
@@ -98,21 +135,24 @@ class PokerServer:
             })
             # Deal each player his private hand.
             for player in game.players:
-                if player.name in self.connections[table_id]:
+                if player.name in self.connections.get(table_id, {}):
                     await self.connections[table_id][player.name].send_text(json.dumps({
                         "type": "hand",
                         "hand": [str(card) for card in player.hand]
                     }))
-
-    def create_game(self, table_id: str, players: List[str]):
-        """Creates a new game at a table with the list of players seated."""
-        self.active_games[table_id] = TexasHoldEm(players)
+        # Remove the scheduled start task since it has finished.
+        if table_id in self.start_tasks:
+            del self.start_tasks[table_id]
 
     async def broadcast(self, table_id: str, message: Any):
         """Sends a message to all websocket connections for the given table_id."""
         if table_id in self.connections:
             for connection in self.connections[table_id].values():
-                await connection.send_text(json.dumps(message))
+                try:
+                    await connection.send_text(json.dumps(message))
+                except Exception:
+                    # If one connection is unresponsive (or closed), ignore it.
+                    pass
 
     async def handle_action(self, table_id: str, player_name: str, action: str, amount: int = 0):
         game = self.active_games.get(table_id)
@@ -198,17 +238,37 @@ class PokerServer:
         if table_id in self.connections:
             self.connections[table_id].pop(player_name, None)
 
-        # Remove the player from the table—checking both to see if they are seated or waiting.
         if table_id in self.tables:
+            # Remove the player from both seated and waiting lists.
             if player_name in self.tables[table_id]["players"]:
                 self.tables[table_id]["players"].remove(player_name)
             if player_name in self.tables[table_id]["waiting"]:
                 self.tables[table_id]["waiting"].remove(player_name)
+
+            # Broadcast the updated table state to the remaining players.
             await self.broadcast(table_id, {
                 "type": "table_update",
                 "players": self.tables[table_id]["players"],
                 "waiting": self.tables[table_id]["waiting"]
             })
+
+            # If a game start is scheduled but now there are not enough players, cancel the scheduled start.
+            if table_id in self.start_tasks and len(self.tables[table_id]["players"]) < MIN_PLAYERS:
+                task = self.start_tasks.pop(table_id)
+                task.cancel()
+                await self.broadcast(table_id, {
+                    "type": "game_cancelled",
+                    "message": "Game cancelled due to insufficient players."
+                })
+
+            # If an active game is in progress but the number of players has dropped below the minimum,
+            # terminate the game and inform the remaining players.
+            if table_id in self.active_games and len(self.tables[table_id]["players"]) < MIN_PLAYERS:
+                del self.active_games[table_id]
+                await self.broadcast(table_id, {
+                    "type": "game_cancelled",
+                    "message": "Game cancelled due to insufficient players."
+                })
 
 
 server = PokerServer()
