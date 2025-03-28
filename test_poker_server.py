@@ -11,8 +11,6 @@ import threading
 import time
 
 import uvicorn
-from fastapi.testclient import TestClient
-from starlette.testclient import WebSocketTestSession
 from websockets import connect
 
 from server import PokerServer, app, GAME_START_DELAY, server  # Imported global "server"
@@ -25,10 +23,7 @@ async def read_message(ws, timeout: float = 1.0) -> tuple[dict | None, Exception
     - If a TimeoutError occurs or JSON parsing fails, returns (None, error).
     """
     try:
-        if asyncio.iscoroutinefunction(ws.receive_text):
-            text = await asyncio.wait_for(ws.receive_text(), timeout)
-        else:
-            text = await asyncio.wait_for(asyncio.to_thread(ws.receive_text), timeout)
+        text = await asyncio.wait_for(ws.recv(), timeout)
     except asyncio.TimeoutError as e:
         return None, e
 
@@ -60,9 +55,9 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         # Reset the server state between tests to avoid interference
         server.reset_state()
-        self.client = TestClient(app)
 
     async def websocket_connect(self, player_name, game_id=None):
+        # Build the URI; use a query parameter named game_id if provided.
         uri = f"ws://127.0.0.1:8000/ws/{player_name}"
         if game_id:
             uri += f"?game_id={game_id}"
@@ -85,12 +80,12 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
     #         await ws.close()
 
     async def test_valid_and_invalid_actions(self):
-        client = TestClient(app)
-        # Use distinct player names to help with debugging.
-        with client.websocket_connect("/ws/TestAlice") as ws_alice, \
-             client.websocket_connect("/ws/TestBob") as ws_bob, \
-             client.websocket_connect("/ws/TestCharlie") as ws_charlie:
+        # Connect players using fully asynchronous websockets.
+        ws_alice = await self.websocket_connect("TestAlice")
+        ws_bob = await self.websocket_connect("TestBob")
+        ws_charlie = await self.websocket_connect("TestCharlie")
 
+        try:
             # table_assigned messages
             msg_alice, err = await read_message(ws_alice)
             assert err is None, f"Error receiving message for Alice: {type(err)} {err}"
@@ -215,6 +210,12 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
             for upd_msg in [update_alice_raw, update_bob_raw, update_charlie_raw]:
                 assert upd_msg.get("type") == "update", f"Expected 'update' message; got {upd_msg.get('type')}"
                 assert "bets 100 chips" in upd_msg.get("message", "").lower(), f"Update message did not confirm the bet: {upd_msg.get('message')}"
+
+        finally:
+            # Ensure websockets are properly closed.
+            await ws_alice.close()
+            await ws_bob.close()
+            await ws_charlie.close()
 
 
 if __name__ == "__main__":
