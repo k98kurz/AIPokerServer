@@ -103,25 +103,28 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
             assert msg_bob["table_id"] == table_id
             assert msg_charlie["table_id"] == table_id, f"Expected table id {table_id}, got {msg_charlie}"
 
-            # table_update broadcasts after join.
+            # table_update broadcasts after joins: Alice gets 3, Bob gets 2, Charlie gets 1.
             msg, err = await read_message(ws_alice)
             assert err is None, f"Error receiving table_update for Alice: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
-
-            msg, err = await read_message(ws_bob)
-            assert err is None, f"Error receiving table_update for Bob: {type(err)} {err}"
+            msg, err = await read_message(ws_alice)
+            assert err is None, f"Error receiving second table_update for Alice: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
-
             msg, err = await read_message(ws_alice)
             assert err is None, f"Error receiving second table_update for Alice: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
-            msg, err = await read_message(ws_charlie)
-            assert err is None, f"Error receiving table_update for Charlie: {type(err)} {err}"
+            # table_update broadcasts after joins: Alice gets 3, Bob gets 2, Charlie gets 1.
+            msg, err = await read_message(ws_bob)
+            assert err is None, f"Error receiving table_update for Bob: {type(err)} {err}"
+            assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
+            msg, err = await read_message(ws_bob)
+            assert err is None, f"Error receiving table_update for Bob: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
-            msg, err = await read_message(ws_alice)
-            assert err is None, f"Error receiving third table_update for Alice: {type(err)} {err}"
+            # table_update broadcasts after joins: Alice gets 3, Bob gets 2, Charlie gets 1.
+            msg, err = await read_message(ws_charlie)
+            assert err is None, f"Error receiving table_update for Charlie: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
             # --- Wait for Game Start Broadcast -----------
@@ -142,12 +145,6 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
             assert start_msg_charlie.get("type") == "start", f"Expected 'start', got {start_msg_charlie}"
             assert start_msg_charlie.get("message") == "Game is starting!", f"Unexpected start message: {start_msg_charlie}"
 
-            # Retrieve the next message from Charlie which should be either a start or table_update.
-            charlie_next, err = await read_message(ws_charlie)
-            assert err is None, f"Error receiving follow-up message for Charlie: {type(err)} {err}"
-            if charlie_next.get("type") not in ["start", "table_update"]:
-                raise AssertionError("Expected 'start' or 'table_update' for Charlie, got " + str(charlie_next.get("type")))
-
             # Update broadcast to determine current turn.
             update_msg_alice, err = await read_message(ws_alice)
             assert err is None, f"Error receiving update for Alice: {type(err)} {err}"
@@ -166,7 +163,7 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
             else:
                 out_of_turn_ws = ws_bob
 
-            out_of_turn_ws.send_text(json.dumps({
+            out_of_turn_ws.send(json.dumps({
                 "action": "bet",
                 "amount": 50
             }))
