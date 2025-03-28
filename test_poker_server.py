@@ -93,15 +93,15 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
 
             # table_assigned messages
             msg_alice, err = await read_message(ws_alice)
-            assert err is None, f"Error receiving message for Alice: {err}"
+            assert err is None, f"Error receiving message for Alice: {type(err)} {err}"
             assert msg_alice.get("type") == "table_assigned", f"Expected 'table_assigned', got {msg_alice}"
 
             msg_bob, err = await read_message(ws_bob)
-            assert err is None, f"Error receiving message for Bob: {err}"
+            assert err is None, f"Error receiving message for Bob: {type(err)} {err}"
             assert msg_bob.get("type") == "table_assigned", f"Expected 'table_assigned', got {msg_bob}"
 
             msg_charlie, err = await read_message(ws_charlie)
-            assert err is None, f"Error receiving message for Charlie: {err}"
+            assert err is None, f"Error receiving message for Charlie: {type(err)} {err}"
             assert msg_charlie.get("type") == "table_assigned", f"Expected 'table_assigned', got {msg_charlie}"
 
             table_id = msg_alice["table_id"]
@@ -110,56 +110,56 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
 
             # table_update broadcasts after join.
             msg, err = await read_message(ws_alice)
-            assert err is None, f"Error receiving table_update for Alice: {err}"
+            assert err is None, f"Error receiving table_update for Alice: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
             msg, err = await read_message(ws_bob)
-            assert err is None, f"Error receiving table_update for Bob: {err}"
+            assert err is None, f"Error receiving table_update for Bob: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
             msg, err = await read_message(ws_alice)
-            assert err is None, f"Error receiving second table_update for Alice: {err}"
+            assert err is None, f"Error receiving second table_update for Alice: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
             msg, err = await read_message(ws_charlie)
-            assert err is None, f"Error receiving table_update for Charlie: {err}"
+            assert err is None, f"Error receiving table_update for Charlie: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
             msg, err = await read_message(ws_alice)
-            assert err is None, f"Error receiving third table_update for Alice: {err}"
+            assert err is None, f"Error receiving third table_update for Alice: {type(err)} {err}"
             assert msg.get("type") == "table_update", f"Expected 'table_update', got {msg}"
 
             # --- Wait for Game Start Broadcast -----------
             start_timeout = GAME_START_DELAY + 1
             print("[DEBUG] Waiting for 'start' message...")
             start_msg_alice, err = await read_message(ws_alice, timeout=start_timeout)
-            assert err is None, f"Error receiving start message for Alice: {err}"
+            assert err is None, f"Error receiving start message for Alice: {type(err)} {err}"
             assert start_msg_alice.get("type") == "start", f"Expected 'start', got {start_msg_alice}"
             assert start_msg_alice.get("message") == "Game is starting!", f"Unexpected start message: {start_msg_alice}"
 
             start_msg_bob, err = await read_message(ws_bob, timeout=start_timeout)
-            assert err is None, f"Error receiving start message for Bob: {err}"
+            assert err is None, f"Error receiving start message for Bob: {type(err)} {err}"
             assert start_msg_bob.get("type") == "start", f"Expected 'start', got {start_msg_bob}"
             assert start_msg_bob.get("message") == "Game is starting!", f"Unexpected start message: {start_msg_bob}"
 
             start_msg_charlie, err = await read_message(ws_charlie, timeout=start_timeout)
-            assert err is None, f"Error receiving start message for Charlie: {err}"
+            assert err is None, f"Error receiving start message for Charlie: {type(err)} {err}"
             assert start_msg_charlie.get("type") == "start", f"Expected 'start', got {start_msg_charlie}"
             assert start_msg_charlie.get("message") == "Game is starting!", f"Unexpected start message: {start_msg_charlie}"
 
             # Retrieve the next message from Charlie which should be either a start or table_update.
             charlie_next, err = await read_message(ws_charlie)
-            assert err is None, f"Error receiving follow-up message for Charlie: {err}"
+            assert err is None, f"Error receiving follow-up message for Charlie: {type(err)} {err}"
             if charlie_next.get("type") not in ["start", "table_update"]:
                 raise AssertionError("Expected 'start' or 'table_update' for Charlie, got " + str(charlie_next.get("type")))
 
             # Update broadcast to determine current turn.
             update_msg_alice, err = await read_message(ws_alice)
-            assert err is None, f"Error receiving update for Alice: {err}"
+            assert err is None, f"Error receiving update for Alice: {type(err)} {err}"
             assert update_msg_alice.get("type") == "update", f"Expected 'update', got {update_msg_alice}"
 
             update_msg_bob, err = await read_message(ws_bob)
-            assert err is None, f"Error receiving update for Bob: {err}"
+            assert err is None, f"Error receiving update for Bob: {type(err)} {err}"
             assert update_msg_bob.get("type") == "update", f"Expected 'update', got {update_msg_bob}"
 
             current_turn = update_msg_alice.get("current_turn")
@@ -176,7 +176,7 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
                 "amount": 50
             }))
             error_msg, err = await read_message(out_of_turn_ws)
-            assert err is None, f"Error receiving error for out-of-turn bet: {err}"
+            assert err is None, f"Error receiving error for out-of-turn bet: {type(err)} {err}"
             assert error_msg.get("type") == "error", f"Expected error type, got {error_msg}"
             assert "not your turn" in error_msg.get("message", "").lower(), f"Error did not indicate out-of-turn: {error_msg.get('message')}"
 
@@ -195,7 +195,7 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
                 "amount": 10000  # An amount far beyond the available chips.
             }))
             error_msg, err = await read_message(current_turn_ws)
-            assert err is None, f"Error receiving error for excessive bet: {err}"
+            assert err is None, f"Error receiving error for excessive bet: {type(err)} {err}"
             assert error_msg.get("type") == "error", f"Expected error type, got {error_msg}"
             assert "insufficient" in error_msg.get("message", "").lower(), f"Expected insufficient chips error, got: {error_msg.get('message')}"
 
@@ -206,11 +206,11 @@ class TestPokerServer(unittest.IsolatedAsyncioTestCase):
             }))
 
             update_alice_raw, err = await read_message(ws_alice)
-            assert err is None, f"Error receiving update for Alice after bet: {err}"
+            assert err is None, f"Error receiving update for Alice after bet: {type(err)} {err}"
             update_bob_raw, err = await read_message(ws_bob)
-            assert err is None, f"Error receiving update for Bob after bet: {err}"
+            assert err is None, f"Error receiving update for Bob after bet: {type(err)} {err}"
             update_charlie_raw, err = await read_message(ws_charlie)
-            assert err is None, f"Error receiving update for Charlie after bet: {err}"
+            assert err is None, f"Error receiving update for Charlie after bet: {type(err)} {err}"
 
             for upd_msg in [update_alice_raw, update_bob_raw, update_charlie_raw]:
                 assert upd_msg.get("type") == "update", f"Expected 'update' message; got {upd_msg.get('type')}"
