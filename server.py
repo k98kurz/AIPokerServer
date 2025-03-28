@@ -138,6 +138,13 @@ class PokerServer:
                 "current_turn": game.players[game.current_turn_index].name if game.players else None,
                 "community_cards": [str(card) for card in game.community_cards]
             })
+            # *** Send each player their private hand ***
+            for player in game.players:
+                if player.name in self.connections.get(table_id, {}):
+                    await self.connections[table_id][player.name].send_text(json.dumps({
+                        "type": "hand",
+                        "hand": [str(card) for card in player.hand]
+                    }))
         else:
             print(f"[DEBUG] Not starting game for table {table_id}. Insufficient players or game already active. Current players: {players}")
         # Remove the scheduled start task since it has finished.
